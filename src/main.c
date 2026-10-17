@@ -43,7 +43,8 @@ static bool dir_has_assets(const char *dir)
     return access(p, R_OK) == 0;
 }
 
-/* assets/ next to the executable (or one level up from build/), else ./assets */
+/* assets/ next to the executable, one level up from build/, or in
+   ../share/bunzi/ (the AppImage layout), else ./assets */
 static int find_assets(char *out, size_t n, const char *override)
 {
     if (override) {
@@ -56,8 +57,8 @@ static int find_assets(char *out, size_t n, const char *override)
         exe[len] = 0;
         char *slash = strrchr(exe, '/');
         if (slash) *slash = 0;
-        const char *rel[] = { "assets", "../assets" };
-        for (int i = 0; i < 2; i++) {
+        const char *rel[] = { "assets", "../assets", "../share/bunzi/assets" };
+        for (int i = 0; i < 3; i++) {
             snprintf(out, n, "%s/%s", exe, rel[i]);
             if (dir_has_assets(out)) return 0;
         }
