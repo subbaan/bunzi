@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Bunzi
+Comment=A pixel-art platformer for the kitty terminal
+Exec=bunzi
+Icon=bunzi
+Terminal=true
+Categories=Game;ArcadeGame;

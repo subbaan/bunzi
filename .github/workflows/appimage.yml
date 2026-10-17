@@ -1,0 +1,77 @@
+# Builds Bunzi-<version>-x86_64.AppImage on Ubuntu 22.04 (glibc 2.35), so it
+# runs on that and anything newer. Every push to main keeps the file as a
+# workflow artifact; publishing a release attaches it to that release.
+name: AppImage
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    env:
+      SDL_VERSION: 3.4.18
+      SDL_SHA256: 9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential ca-certificates cmake curl file git pkg-config \
+            libpng-dev zlib1g-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev \
+            libdbus-1-dev libusb-1.0-0-dev
+
+      - uses: actions/checkout@v7
+
+      # SDL3 isn't packaged on 22.04. Audio and gamepad only: a terminal game
+      # needs no windows. Sound backends are loaded at run time, so the
+      # player's own PipeWire/PulseAudio/ALSA is used.
+      - name: Build SDL3 ${{ env.SDL_VERSION }}
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/sdl.tar.gz" \
+            "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VERSION/SDL3-$SDL_VERSION.tar.gz"
+          echo "$SDL_SHA256  $RUNNER_TEMP/sdl.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/sdl.tar.gz" -C "$RUNNER_TEMP"
+          cmake -S "$RUNNER_TEMP/SDL3-$SDL_VERSION" -B "$RUNNER_TEMP/sdl-build" \
+            -DCMAKE_BUILD_TYPE=Release -DSDL_UNIX_CONSOLE_BUILD=ON \
+            -DSDL_VIDEO=OFF -DSDL_DIALOG=OFF -DSDL_TRAY=OFF \
+            -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_TEST_LIBRARY=OFF \
+            -DSDL_EXAMPLES=OFF -DSDL_INSTALL_DOCS=OFF
+          cmake --build "$RUNNER_TEMP/sdl-build" -j"$(nproc)"
+          cmake --install "$RUNNER_TEMP/sdl-build"
+          ldconfig
+
+      - name: Build the AppImage
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          make
+          ./bunzi --version
+          make appimage
+
+      - name: Check the version matches the release tag
+        if: github.event_name == 'release'
+        run: |
+          v=$(./bunzi --version | awk '{ print $2 }')
+          [ "${GITHUB_REF_NAME#v}" = "$v" ] || {
+            echo "release tag $GITHUB_REF_NAME doesn't match bunzi $v"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Bunzi-AppImage
+          path: build/Bunzi-*.AppImage
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: build/Bunzi-*.AppImage

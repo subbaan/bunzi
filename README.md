@@ -15,7 +15,7 @@ Levels: 1 Moonlit Ruins (night), 2 Sunset Lake (dusk), 3 Tropical Island
 (day), 4 Crystal Caverns (underground). The game opens on the title screen
 (start, level choice, quit) with its own SID-style tune; Esc in a level returns to it.
 
-Version: 0.11.4
+Version: 0.11.5
 
 ## Screenshots
 
@@ -52,6 +52,27 @@ Water enemies:
   give it away) and snap up at you as you jump over their pool. Each needs a
   moment between leaps, so cross just after one.
 - **Jellyfish** (level 3) squirt water at you, aiming where you're heading.
+
+## Download & run (AppImage)
+
+Each [release](https://github.com/subbaan/bunzi/releases) has a
+`Bunzi-<version>-x86_64.AppImage`: one file holding the game, its art and
+sounds, and the libraries it needs (SDL3, libpng). It runs on Linux systems
+from about 2022 on (glibc 2.35+; Ubuntu 22.04, Debian 12, Fedora 36, Arch …).
+Open kitty and run:
+
+```sh
+chmod +x Bunzi-*-x86_64.AppImage
+./Bunzi-*-x86_64.AppImage
+```
+
+It still needs to be started inside kitty; options such as `--level 3` pass
+straight through. If it complains about FUSE, run it with
+`--appimage-extract-and-run`. Scores go to `~/.local/share/bunzi/` as usual.
+
+`make appimage` builds one locally (`packaging/appimage.sh`), and the
+`AppImage` workflow in `.github/workflows/` builds the release one on
+Ubuntu 22.04 so it runs on older systems too.
 
 ## Build & run
 
@@ -127,6 +148,7 @@ skips. `BUNZI_FX_DUMP=DIR` (developer opt-in) saves a few overlay frames.
   night ambience loop and three music loops: `music_chip.wav` (in game),
   `music_title.wav` (the title screen) and `music_calm.wav` (a spare).
   `sounds.txt` maps game events to files and volumes; edit it to pick variants.
+- `packaging/` – the AppImage build script, desktop entry and icon.
 - `docs/` – design notes (the terminal-transition plan) and the README's
   screenshots, rendered by the game's own `--dump`.
 
