@@ -1,0 +1,6 @@
+-xc
+-std=gnu11
+-D_GNU_SOURCE
+-Wall
+-Wextra
+-I/usr/include/SDL3

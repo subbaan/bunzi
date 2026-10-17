@@ -1,0 +1,35 @@
+# build output and the root symlink to it
+build/
+/bunzi
+# local only: the original art and the tools that turn it into assets/*/gen
+# (the game reads only gen/, the level files and the sounds)
+tools/
+*_raw.png
+spritecook-assets.json
+__pycache__/
+# local only: unused art (cat hero, rejected tilesets, mockups, templates)
+extras/
+# frame dumps
+*.ppm
+# only the sounds sounds.txt plays go up; add a line here when you pick another
+# variant (the others stay on disk, see tools/make_sounds.py)
+assets/sounds/*.wav
+!assets/sounds/ambience_night.wav
+!assets/sounds/clear_a.wav
+!assets/sounds/coin_b.wav
+!assets/sounds/die_a.wav
+!assets/sounds/ghost_a.wav
+!assets/sounds/hurt_a.wav
+!assets/sounds/jump_b.wav
+!assets/sounds/land_a.wav
+!assets/sounds/menu_a.wav
+!assets/sounds/music_chip.wav
+!assets/sounds/music_title.wav
+!assets/sounds/poof_a.wav
+!assets/sounds/record_a.wav
+!assets/sounds/respawn_a.wav
+!assets/sounds/select_a.wav
+!assets/sounds/skid_a.wav
+!assets/sounds/splash_a.wav
+!assets/sounds/step_a.wav
+!assets/sounds/stomp_a.wav

@@ -1,0 +1,21 @@
+# Which file each game event plays: event file volume
+# Variants are name_a/_b/_c...wav - listen to them and change freely.
+jump     jump_b.wav     0.55
+land     land_a.wav     0.45
+coin     coin_b.wav     0.30
+stomp    stomp_a.wav    0.60
+poof     poof_a.wav     0.45
+hurt     hurt_a.wav     0.60
+die      die_a.wav      0.60
+clear    clear_a.wav    0.70
+skid     skid_a.wav     0.30
+step     step_a.wav     0.18
+respawn  respawn_a.wav  0.50
+ghost    ghost_a.wav    0.35
+menu     menu_a.wav     0.35
+select   select_a.wav   0.45
+music    music_chip.wav     0.60
+title_music music_title.wav 0.55
+ambience ambience_night.wav 0.35
+splash   splash_a.wav   0.40
+record   record_a.wav   0.60
