@@ -2,6 +2,6 @@
 #define VERSION_H
 
 #define PLAT_NAME    "bunzi"
-#define PLAT_VERSION "0.11.5"
+#define PLAT_VERSION "0.11.6"
 
 #endif

@@ -96,7 +96,7 @@ static void usage(FILE *f)
         "          esc/Q quit (gamepad B or back goes to QUIT).\n"
         "Keyboard: arrows/WASD move, Z/space/up jump (hold for height), X/shift run,\n"
         "          down+jump drops through platforms, R restart, tab debug overlay,\n"
-        "          N mute, 1-9 jump to a level, M transport, S scaler, F fps,\n"
+        "          N mute, 1-9 jump to a level, M transport, G scaler, F fps,\n"
         "          esc/Q back to the title.\n"
         "Gamepad:  d-pad/left stick move, A jump, X/RB/RT run, back restart,\n"
         "          start debug overlay, back+start back to the title.\n"
@@ -537,7 +537,7 @@ int main(int argc, char **argv)
                 continue;
             }
             if (!in_res) {
-                if (pr['s'] && !d['a'] && !d['d']) g.sc = (ScaleMode)((g.sc + 1) % SC_COUNT);
+                if (pr['g']) g.sc = (ScaleMode)((g.sc + 1) % SC_COUNT);
                 if (pr[K_TAB] || (pad.start_pressed && !pad.back)) hud = !hud;
                 if (pr['r'] || (pad.back_pressed && !pad.start)) game_restart(game);
                 for (int i = 0; i < 9 && i < game_level_count(); i++)
