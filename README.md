@@ -7,7 +7,7 @@ battles.
 
 ![The title screen](docs/screenshots/title.png)
 
-Version: 0.11.6 · Linux x86_64 · needs the [kitty](https://sw.kovidgoyal.net/kitty/) terminal
+Version: 0.12.0 · Linux x86_64 · needs the [kitty](https://sw.kovidgoyal.net/kitty/) terminal
 
 ## Play it
 
@@ -55,7 +55,8 @@ terminals won't work.
 
 1 Moonlit Ruins (night), 2 Sunset Lake (dusk), 3 Tropical Island (day),
 4 Crystal Caverns (underground). The game opens on the title screen (start,
-level choice, quit) with its own SID-style tune; Esc in a level returns to it.
+level choice, controls, quit) with its own SID-style tune; Esc in a level
+returns to it.
 
 | | |
 |---|---|
@@ -100,6 +101,17 @@ Water enemies:
 | Back to the title | Esc / Q | Back + Start |
 | Title: choose / select | arrows, WASD / Z, space, enter | d-pad / A, start |
 | Title: quit | Esc / Q | B or back (to QUIT) |
+
+The keyboard keys are the defaults. To change them, choose **CONTROLS** on
+the title screen: pick a slot with the arrows, press Enter, then press the new
+key (Backspace clears a slot, Esc goes back). Each action takes up to four
+keys, and the bunny shows what the chosen one does. Giving a key to one action
+takes it from another, swapping keys where it can. Your keys are saved in
+`~/.config/bunzi/controls.txt` (or `$XDG_CONFIG_HOME/bunzi/`). Esc always
+works, and a shortcut key such as N (mute) stops being a shortcut once an
+action has it. The gamepad layout is fixed.
+
+![The controls screen](docs/screenshots/controls.png)
 
 When started with `--level N` the title screen is skipped, so Esc / Q quits.
 Debug keys and developer options are in
