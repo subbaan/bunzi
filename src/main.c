@@ -11,6 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "controls.h"
 #include "game.h"
 #include "gfx.h"
 #include "kgfx.h"
@@ -97,7 +98,10 @@ static void usage(FILE *f)
         "Keyboard: arrows/WASD move, Z/space/up jump (hold for height), X/shift run,\n"
         "          down+jump drops through platforms, R restart, tab debug overlay,\n"
         "          N mute, 1-9 jump to a level, M transport, G scaler, F fps,\n"
-        "          esc/Q back to the title.\n"
+        "          esc/Q back to the title. The movement keys and R are the defaults:\n"
+        "          change them under CONTROLS on the title screen (saved in\n"
+        "          $XDG_CONFIG_HOME/bunzi/controls.txt, ~/.config/bunzi). A shortcut\n"
+        "          key given to an action stops being a shortcut; esc always works.\n"
         "Gamepad:  d-pad/left stick move, A jump, X/RB/RT run, back restart,\n"
         "          start debug overlay, back+start back to the title.\n"
         "\n"
@@ -107,7 +111,8 @@ static void usage(FILE *f)
         "Perfect clears (every coin) are ranked per level, by the time less 0.5s per\n"
         "enemy stomped, in $XDG_DATA_HOME/bunzi/scores.txt (~/.local/share/bunzi).\n"
         "\n"
-        "BUNZI_DUMP_TITLE=SECS with --dump renders the title screen instead;\n"
+        "BUNZI_DUMP_TITLE=SECS with --dump renders the title screen instead, and\n"
+        "BUNZI_DUMP_CONTROLS=\"ROW [SECS [listen]]\" the controls screen over it;\n"
         "BUNZI_DUMP_RESULTS=\"COINS KILLS SECS\" adds a results screen (scores read only).\n",
         PLAT_NAME, game_level_count());
 }
@@ -165,7 +170,23 @@ static int dump_frame(const char *assets, int level, const char *path)
         if (!ti) { fprintf(stderr, "%s: %s\n", PLAT_NAME, err); free(cv.px); game_destroy(g); return 1; }
         int lv = level;
         for (int i = 0; i < (int)(atof(title_secs) * SIM_HZ); i++) title_update(ti, NULL, 1.0f / SIM_HZ, &lv);
+        /* BUNZI_DUMP_CONTROLS="ROW [SECS [listen]]": the controls screen over it */
+        const char *ce = getenv("BUNZI_DUMP_CONTROLS");
+        CtlScreen *cs = ce ? ctl_screen_create(assets, err, sizeof err) : NULL;
+        if (ce && !cs) fprintf(stderr, "%s: %s\n", PLAT_NAME, err);
+        if (cs) {
+            int row = 0;
+            float secs = 1.0f;
+            char mode[16] = "";
+            sscanf(ce, "%d %f %15s", &row, &secs, mode);
+            title_backdrop(ti, true);
+            ctl_screen_open(cs);
+            ctl_screen_select(cs, row, !strcmp(mode, "listen"));
+            for (int i = 0; i < (int)(secs * SIM_HZ); i++) ctl_screen_update(cs, NULL, NULL, NULL, 1.0f / SIM_HZ);
+        }
         title_render(ti, &cv);
+        if (cs) ctl_screen_render(cs, &cv);
+        ctl_screen_destroy(cs);
         title_destroy(ti);
     } else {
         const char *tx = getenv("BUNZI_DUMP_TX");
@@ -211,13 +232,14 @@ static int dump_frame(const char *assets, int level, const char *path)
     return 0;
 }
 
-/* what is on screen: the title or a level */
-typedef struct { Game *game; Title *title; bool on_title; } Scene;
+/* what is on screen: the title (perhaps with the controls screen over it) or a level */
+typedef struct { Game *game; Title *title; CtlScreen *ctl; bool on_title, on_ctl; } Scene;
 
 static void scene_idle(Scene *sc, float dt)
 {
     if (sc->on_title) {
         title_update(sc->title, NULL, dt, NULL);
+        if (sc->on_ctl) ctl_screen_update(sc->ctl, NULL, NULL, NULL, dt);
     } else {
         Actions none = { 0 };
         game_update(sc->game, &none, dt);
@@ -228,6 +250,27 @@ static void scene_render(Scene *sc, Canvas *cv)
 {
     if (sc->on_title) title_render(sc->title, cv);
     else game_render(sc->game, cv);
+    if (sc->on_title && sc->on_ctl) ctl_screen_render(sc->ctl, cv);
+}
+
+/* a hotkey, unless it was given to an action */
+static bool hot(const bool *pr, int k) { return pr[k] && !ctl_bound(k); }
+
+/* Menus: the arrows and Enter, plus W A S D, Z and space unless they were
+ * given to an action other than their menu use; keys bound to left, right
+ * and down move too. */
+static bool menu_key(const bool *pr, int k, Control c) { return pr[k] && (!ctl_bound(k) || ctl_has(k, c)); }
+
+static TitleInput menu_input(const bool *pr, const bool *pad_edge, const PadState *pad)
+{
+    return (TitleInput){
+        .up      = pr[K_UP] || menu_key(pr, 'w', CT_JUMP) || pad_edge[0],
+        .down    = pr[K_DOWN] || menu_key(pr, 's', CT_DOWN) || ctl_any(pr, CT_DOWN) || pad_edge[1],
+        .left    = pr[K_LEFT] || menu_key(pr, 'a', CT_LEFT) || ctl_any(pr, CT_LEFT) || pad_edge[2],
+        .right   = pr[K_RIGHT] || menu_key(pr, 'd', CT_RIGHT) || ctl_any(pr, CT_RIGHT) || pad_edge[3],
+        .confirm = pr[K_ENTER] || menu_key(pr, ' ', CT_JUMP) || menu_key(pr, 'z', CT_JUMP) ||
+                   pad->jump_pressed || pad->start_pressed,
+    };
 }
 
 /* Play the terminal transition. The scene keeps running (no input) so the
@@ -368,6 +411,7 @@ int main(int argc, char **argv)
         }
     }
     int fps = fps_custom ? fps_custom : FPS_STEPS[fps_idx];
+    ctl_load();
 
     char assets[PATH_MAX];
     bool have_assets = find_assets(assets, sizeof assets, assets_opt) == 0;
@@ -427,7 +471,9 @@ int main(int argc, char **argv)
     /* the title screen, unless a level was asked for (a missing title is not fatal) */
     Title *title = level_given || bench > 0 ? NULL : title_create(assets, err, sizeof err);
     if (!title && logf && !level_given && bench <= 0) fprintf(logf, "title: %s\n", err);
-    Scene scene = { game, title, title != NULL };
+    CtlScreen *ctls = title ? ctl_screen_create(assets, err, sizeof err) : NULL;
+    if (title && !ctls && logf) fprintf(logf, "controls screen: %s\n", err);
+    Scene scene = { game, title, ctls, title != NULL, false };
     Results *res = results_create(bench > 0);
     bool in_res = false;                /* the results screen is up over a cleared level */
     int menu_level = level;
@@ -495,8 +541,10 @@ int main(int argc, char **argv)
         bool pad_now[4] = { pad.up, pad.down, pad.left, pad.right }, pad_edge[4];
         for (int k = 0; k < 4; k++) { pad_edge[k] = pad_now[k] && !pad_was[k]; pad_was[k] = pad_now[k]; }
         TitleInput ti = { 0 };
+        CtlNav nav = { 0 };
         char typed = 0;
         bool typing = in_res && results_typing(res);
+        bool keys_busy = typing || scene.on_ctl;    /* letters aren't hotkeys here */
         if (typing) {                       /* initials: letter keys type, arrows and the pad edit */
             for (int c = 'a'; c <= 'z' && !typed; c++) if (pr[c]) typed = (char)(c - 32);
             if (pr[127] || pr[8]) typed = '\b';
@@ -507,23 +555,23 @@ int main(int argc, char **argv)
                 .confirm = pad.jump_pressed || pad.start_pressed, .back = pad.cancel_pressed,
             };
         } else if (in_res) {
-            ti = (TitleInput){
-                .up = pr[K_UP] || pr['w'] || pad_edge[0], .down = pr[K_DOWN] || pr['s'] || pad_edge[1],
-                .left = pr[K_LEFT] || pr['a'] || pad_edge[2], .right = pr[K_RIGHT] || pr['d'] || pad_edge[3],
-                .confirm = pr[K_ENTER] || pr[' '] || pr['z'] || pad.jump_pressed || pad.start_pressed,
-                .back = pad.cancel_pressed,
-            };
+            ti = menu_input(pr, pad_edge, &pad);
+            ti.back = pad.cancel_pressed;
         }
-        if (scene.on_title) {
-            if (pr[K_ESC] || pr['q']) break;
-            ti = (TitleInput){
-                .up = pr[K_UP] || pr['w'] || pad_edge[0], .down = pr[K_DOWN] || pr['s'] || pad_edge[1],
-                .left = pr[K_LEFT] || pr['a'] || pad_edge[2], .right = pr[K_RIGHT] || pr['d'] || pad_edge[3],
-                .confirm = pr[K_ENTER] || pr[' '] || pr['z'] || pad.jump_pressed || pad.start_pressed,
-                .back = pad.cancel_pressed || pad.back_pressed,
+        if (scene.on_ctl) {
+            nav = (CtlNav){
+                .up = pr[K_UP] || pad_edge[0], .down = pr[K_DOWN] || pad_edge[1],
+                .left = pr[K_LEFT] || pad_edge[2], .right = pr[K_RIGHT] || pad_edge[3],
+                .confirm = pr[K_ENTER] || pr[' '] || pad.jump_pressed || pad.start_pressed,
+                .clear = pr[127] || pr[8],
+                .back = pr[K_ESC] || pad.cancel_pressed || pad.back_pressed,
             };
+        } else if (scene.on_title) {
+            if (pr[K_ESC] || hot(pr, 'q')) break;
+            ti = menu_input(pr, pad_edge, &pad);
+            ti.back = pad.cancel_pressed || pad.back_pressed;
         } else {
-            bool leave = pr[K_ESC] || (pr['q'] && !typing) || (pad.start && pad.back && (pad.start_pressed || pad.back_pressed));
+            bool leave = pr[K_ESC] || (hot(pr, 'q') && !typing) || (pad.start && pad.back && (pad.start_pressed || pad.back_pressed));
             if (leave && !title) break;
             if (leave) {                    /* back to the title, on the level we were playing */
                 GameInfo gi;
@@ -537,29 +585,31 @@ int main(int argc, char **argv)
                 continue;
             }
             if (!in_res) {
-                if (pr['g']) g.sc = (ScaleMode)((g.sc + 1) % SC_COUNT);
-                if (pr[K_TAB] || (pad.start_pressed && !pad.back)) hud = !hud;
-                if (pr['r'] || (pad.back_pressed && !pad.start)) game_restart(game);
+                if (hot(pr, 'g')) g.sc = (ScaleMode)((g.sc + 1) % SC_COUNT);
+                if (hot(pr, K_TAB) || (pad.start_pressed && !pad.back)) hud = !hud;
+                if (ctl_any(pr, CT_RESTART) || (pad.back_pressed && !pad.start)) game_restart(game);
                 for (int i = 0; i < 9 && i < game_level_count(); i++)
-                    if (pr['1' + i]) game_set_level(game, i, err, sizeof err);
+                    if (hot(pr, '1' + i)) game_set_level(game, i, err, sizeof err);
             }
         }
-        if (pr['m'] && !typing) {      /* while typing initials, letters are letters */
+        if (hot(pr, 'm') && !keys_busy) {
             do g.tx = (TxMode)((g.tx + 1) % TX_COUNT); while (g.tx == TX_SHM && !caps.gfx_shm);
         }
-        if (pr['f'] && !typing) { fps_idx = (fps_idx + 1) % N_FPS; fps = FPS_STEPS[fps_idx]; }
-        if (pr['n'] && !typing) snd_toggle_mute();
-        if (scene.on_title && pr[K_TAB]) hud = !hud;
+        if (hot(pr, 'f') && !keys_busy) { fps_idx = (fps_idx + 1) % N_FPS; fps = FPS_STEPS[fps_idx]; }
+        if (hot(pr, 'n') && !keys_busy) snd_toggle_mute();
+        if (scene.on_title && !scene.on_ctl && hot(pr, K_TAB)) hud = !hud;
 
         Actions act = {
-            .left  = d[K_LEFT] || d['a'] || pad.left,
-            .right = d[K_RIGHT] || d['d'] || pad.right,
-            .up    = d[K_UP] || d['w'] || pad.up,
-            .down  = d[K_DOWN] || d['s'] || pad.down,
-            .jump  = d['z'] || d[' '] || d[K_UP] || d['w'] || pad.jump,
-            .run   = d['x'] || d[K_SHIFT] || pad.run,
+            .left  = ctl_any(d, CT_LEFT) || pad.left,
+            .right = ctl_any(d, CT_RIGHT) || pad.right,
+            .up    = d[K_UP] || pad.up,
+            .down  = ctl_any(d, CT_DOWN) || pad.down,
+            .jump  = ctl_any(d, CT_JUMP) || pad.jump,
+            .run   = ctl_any(d, CT_RUN) || pad.run,
         };
-        pending_jump |= pr['z'] || pr[' '] || pr[K_UP] || pr['w'] || pad.jump_pressed;
+        pending_jump |= ctl_any(pr, CT_JUMP) || pad.jump_pressed;
+        static bool pr_frame[K_MAX];        /* the edges outlive the clear below, for the controls screen */
+        memcpy(pr_frame, pr, sizeof pr_frame);
         if (in_res) act = (Actions){ 0 };   /* the bunny waits at the exit */
         if (bench > 0) {
             if (t - t0 >= bench) break;
@@ -572,9 +622,20 @@ int main(int argc, char **argv)
         if (t - sim_t > 0.25) sim_t = t - 0.25;
         bool first = true;
         while (sim_t + DT <= t) {
-            if (scene.on_title) {
+            if (scene.on_ctl) {
+                title_update(title, NULL, DT, &menu_level);
+                if (ctl_screen_update(ctls, first ? &nav : NULL, pr_frame, d, DT)) {
+                    scene.on_ctl = false;
+                    title_backdrop(title, false);
+                }
+            } else if (scene.on_title) {
                 TitleAction ta = title_update(title, first ? &ti : NULL, DT, &menu_level);
                 if (ta == TA_QUIT) { quit = true; break; }
+                if (ta == TA_CONTROLS && ctls) {
+                    scene.on_ctl = true;
+                    ctl_screen_open(ctls);
+                    title_backdrop(title, true);
+                }
                 if (ta == TA_START) {
                     if (game_set_level(game, menu_level, err, sizeof err) == 0) {
                         scene.on_title = false;
@@ -723,6 +784,7 @@ int main(int argc, char **argv)
     pad_shutdown();
     game_destroy(game);
     title_destroy(title);
+    ctl_screen_destroy(ctls);
     results_destroy(res);
     free(cv.px);
 

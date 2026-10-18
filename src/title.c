@@ -14,8 +14,9 @@
 #define LOGO_Y   12
 #define CAT_X    140        /* where the bunny sits: the lit bend of the path */
 #define CAT_Y    238
-#define MENU_Y   150
-#define NITEMS   3
+#define MENU_Y   140
+#define MENU_DY  18
+#define NITEMS   4
 
 enum { CAT_WAIT, CAT_WALK, CAT_SIT, CAT_LEAVE };
 
@@ -28,7 +29,7 @@ struct Title {
     int moon_x, moon_y, lamp_x, lamp_y;     /* light spots found in the layers */
     int logo_lamp_x, logo_lamp_y;           /* the logo's own lantern */
     float t, et;                            /* scenery time, entrance time */
-    bool hold;
+    bool hold, backdrop;
     int sel, level;         /* menu item, level shown in the menu */
     int cat;
     float cat_x, cat_anim, cat_still, leave_t;
@@ -128,10 +129,12 @@ void title_reset(Title *t, bool hold)
     t->cat = CAT_WAIT;
     t->cat_x = -24;
     t->cat_anim = t->cat_still = t->leave_t = 0;
-    if (t->sel == 2) t->sel = 0;
+    if (t->sel == NITEMS - 1) t->sel = 0;
 }
 
 void title_hold(Title *t, bool hold) { t->hold = hold; }
+
+void title_backdrop(Title *t, bool on) { t->backdrop = on; }
 
 /* --------------------------------------------------------------- update */
 
@@ -187,11 +190,12 @@ TitleAction title_update(Title *t, const TitleInput *in, float dt, int *level)
         snd_play(SFX_MENU, 1.0f, in->right ? 1.12f : 0.9f, 0);
     }
     if (in->back) {
-        if (t->sel != 2) { t->sel = 2; t->sel_t = 0; snd_play(SFX_MENU, 1.0f, 0.8f, 0); }
+        if (t->sel != NITEMS - 1) { t->sel = NITEMS - 1; t->sel_t = 0; snd_play(SFX_MENU, 1.0f, 0.8f, 0); }
         else return TA_QUIT;
     }
     if (in->confirm) {
-        if (t->sel == 2) return TA_QUIT;
+        if (t->sel == NITEMS - 1) return TA_QUIT;
+        if (t->sel == 2) { snd_play(SFX_SELECT, 1.0f, 1.0f, 0); return TA_CONTROLS; }
         if (t->sel == 1) { t->sel = 0; t->sel_t = 0; snd_play(SFX_MENU, 1.0f, 1.0f, 0); return TA_NONE; }
         snd_play(SFX_SELECT, 1.0f, 1.0f, 0);
         t->cat = CAT_LEAVE;
@@ -301,7 +305,7 @@ void title_render(Title *t, Canvas *cv)
     }
 
     /* the bunny */
-    if (t->cat != CAT_WAIT) {
+    if (t->cat != CAT_WAIT && !t->backdrop) {
         const Sprite *sp;
         if (t->cat == CAT_WALK || t->cat == CAT_LEAVE) sp = t->run[(int)(t->cat_anim / 9.0f) % 6];
         else sp = fmodf(t->cat_still, 3.4f) > 3.2f ? t->idle[1] : t->idle[0];
@@ -309,6 +313,7 @@ void title_render(Title *t, Canvas *cv)
         draw_sprite(cv, sp, x, CAT_Y, 0, 0, 0);
     }
     draw_flies(t, cv, true);
+    if (t->backdrop) return;
 
     /* logo: drops in and settles, then bobs */
     float u = (t->et - 0.2f) / 0.9f;
@@ -335,7 +340,7 @@ void title_render(Title *t, Canvas *cv)
 
     /* menu */
     if (t->et > 1.5f) {
-        int px = 112, pw = VIEW_W - 2 * px, py = MENU_Y - 8, ph = NITEMS * 20 + 10;
+        int px = 112, pw = VIEW_W - 2 * px, py = MENU_Y - 8, ph = NITEMS * MENU_DY + 10;
         gfx_tint(cv, px + 2, py, pw - 4, ph, 0x0a0820, 150);
         gfx_tint(cv, px, py + 2, 2, ph - 4, 0x0a0820, 150);
         gfx_tint(cv, px + pw - 2, py + 2, 2, ph - 4, 0x0a0820, 150);
@@ -345,8 +350,9 @@ void title_render(Title *t, Canvas *cv)
             if (i == 0) snprintf(buf, sizeof buf, "START GAME");
             else if (i == 1) snprintf(buf, sizeof buf, "%sLEVEL %d  %s%s", on ? "< " : "", t->level + 1,
                                       game_level_title(t->level), on ? " >" : "");
+            else if (i == 2) snprintf(buf, sizeof buf, "CONTROLS");
             else snprintf(buf, sizeof buf, "QUIT");
-            int w = gfx_text_width(buf, 2), x = (VIEW_W - w) / 2, y = MENU_Y + i * 20;
+            int w = gfx_text_width(buf, 2), x = (VIEW_W - w) / 2, y = MENU_Y + i * MENU_DY;
             uint32_t c = on ? 0xffd860 : 0xc8c0e8;
             if (t->cat == CAT_LEAVE && i == 0) c = ((int)(t->leave_t * 12) & 1) ? 0xffffff : 0xffd860;
             if (on) {

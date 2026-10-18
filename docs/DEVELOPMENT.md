@@ -24,7 +24,8 @@ teleport (`BUNZI_DUMP_TX`, dump only) are marked practice and not recorded.
 autoplays and prints frame statistics, `--dump FILE` renders one frame to a
 PPM, `--level N` skips the title and starts at level N, `--fps`, `--mode`,
 `--scale`, `--assets DIR`. `BUNZI_DUMP_TITLE=SECS` with `--dump`
-renders the title screen. See `--help`.
+renders the title screen, and `BUNZI_DUMP_CONTROLS="ROW [SECS [listen]]"`
+the controls screen over it (row 0–5 an action, 6 the buttons). See `--help`.
 
 `--show-fps` shows the frame rate kitty is actually displaying in the
 bottom-left corner (green at the target rate, amber below it).
@@ -58,7 +59,8 @@ in the file. The enemy time bonuses are per kind, in `KILL_BONUS` in
 - `src/` – engine: `term.c` (tty, kitty keyboard), `kgfx.c` (kitty graphics
   output), `pad.c` (SDL3 gamepad), `assets.c` (PNG, atlas, sprite drawing),
   `level.c` (text levels), `game.c` (gameplay + rendering), `results.c` (results
-  screen and Top 10), `title.c` (title screen), `main.c` (loop).
+  screen and Top 10), `title.c` (title screen), `controls.c` (key bindings,
+  `~/.config/bunzi/controls.txt`, and the controls screen), `main.c` (loop).
 - `assets/<level>/` – one folder per level with its `levelN.txt` and `gen/`:
   `sprites.png` + `sprites.txt` (the sprite atlas: name, x, y, w, h, anchor)
   and the parallax backgrounds (`bg_*.png`).
@@ -67,6 +69,7 @@ in the file. The enemy time bonuses are per kind, in `KILL_BONUS` in
 - `assets/exit/`, `assets/effects/` – the burrow door, and the water squirt,
   splash and spray.
 - `assets/title/` – the title screen's layers, logo and magic sparkles.
+- `assets/controls/` – the controls screen's frame (SpriteCook, drawn at 2x).
 - `assets/sounds/` – every effect in a few variants (`jump_a/_b/_c.wav` …), a
   night ambience loop and three music loops: `music_chip.wav` (in game),
   `music_title.wav` (the title screen) and `music_calm.wav` (a spare).
