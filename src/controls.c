@@ -1,33 +1,43 @@
-/* Keyboard bindings and the controls screen.
+/* Keyboard and gamepad bindings, and the controls screen.
  *
- * Each action has up to four keys. Giving a key to one action takes it from
- * any other (the two swap keys where they can), and no action is ever left
- * without a key. The file is rewritten through a temporary and a rename after
- * every change. */
+ * Each action has up to four keys and four gamepad buttons. Giving a key to
+ * one action takes it from any other (the two swap keys where they can), and
+ * no action is ever left without one. The file is rewritten through a
+ * temporary and a rename after every change. */
 #include "controls.h"
 
 #include <errno.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "assets.h"
+#include "pad.h"
 #include "sound.h"
 #include "term.h"
 
+enum { DEV_KEYS, DEV_PAD, NDEV };
+
 static const char *const CT_LABEL[CT_COUNT] = { "LEFT", "RIGHT", "DOWN", "JUMP", "RUN", "RESTART" };
 static const char *const CT_FILE[CT_COUNT]  = { "left", "right", "down", "jump", "run", "restart" };
-static const char *const CT_HELP[CT_COUNT]  = {
-    "RUN LEFT", "RUN RIGHT", "DOWN + JUMP DROPS THROUGH A PLATFORM",
-    "HOLD IT FOR A HIGHER JUMP", "HOLD IT TO RUN FASTER", "START THE LEVEL AGAIN",
+static const char *const CT_HELP[NDEV][CT_COUNT] = {
+    { "RUN LEFT", "RUN RIGHT", "DOWN + JUMP DROPS THROUGH A PLATFORM",
+      "HOLD IT FOR A HIGHER JUMP", "HOLD IT TO RUN FASTER", "START THE LEVEL AGAIN" },
+    { "RUN LEFT  -  THE LEFT STICK WORKS TOO", "RUN RIGHT  -  THE LEFT STICK WORKS TOO",
+      "DOWN + JUMP DROPS THROUGH A PLATFORM", "HOLD IT FOR A HIGHER JUMP", "HOLD IT TO RUN FASTER",
+      "START THE LEVEL AGAIN" },
 };
-static const int DEFAULTS[CT_COUNT][CT_KEYS] = {
-    { K_LEFT, 'a' }, { K_RIGHT, 'd' }, { K_DOWN, 's' }, { 'z', ' ', K_UP, 'w' }, { 'x', K_SHIFT }, { 'r' },
+static const char *const WORD[NDEV] = { "KEY", "BUTTON" };
+static const int DEFAULTS[NDEV][CT_COUNT][CT_KEYS] = {
+    { { K_LEFT, 'a' }, { K_RIGHT, 'd' }, { K_DOWN, 's' }, { 'z', ' ', K_UP, 'w' }, { 'x', K_SHIFT }, { 'r' } },
+    { { PB_LEFT }, { PB_RIGHT }, { PB_DOWN }, { PB_A }, { PB_X, PB_RB, PB_RT }, { PB_BACK } },
 };
-static int keys[CT_COUNT][CT_KEYS];     /* 0: empty slot */
+static int binds[NDEV][CT_COUNT][CT_KEYS];     /* 0: empty slot */
 static char cfg_dir[1024], cfg_path[1100];
 
 /* ---------------------------------------------------------------- keys */
@@ -43,9 +53,23 @@ static const struct { int key; const char *name; } NAMED[] = {
 };
 #define NNAMED (int)(sizeof NAMED / sizeof NAMED[0])
 
-/* Esc always means back, so it is never bound */
-static bool bindable(int key)
+/* the file's names for the buttons */
+static const char *const PB_NAME[PB_COUNT] = {
+    "", "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "LS", "RS", "BACK", "START",
+    "D-UP", "D-DOWN", "D-LEFT", "D-RIGHT", "P1", "P2", "P3", "P4", "MISC",
+};
+/* On screen the face buttons and the d-pad are pictures, so they read right
+ * on any make of pad: \1-\4 the bottom, right, left and top face button,
+ * \5-\10 the d-pad's up, down, left and right, \11 the whole d-pad. */
+static const char *const PB_LABEL[PB_COUNT] = {
+    "", "\1", "\2", "\3", "\4", "LB", "RB", "LT", "RT", "LS", "RS", "BACK", "START",
+    "\5", "\6", "\7", "\10", "P1", "P2", "P3", "P4", "MISC",
+};
+
+/* Esc always means back, so it is never bound; nor is the pad's guide button */
+static bool bindable(int dev, int key)
 {
+    if (dev == DEV_PAD) return key > 0 && key < PB_COUNT;
     return (key > ' ' && key < 127 && !(key >= 'A' && key <= 'Z')) || key == ' ' || key == K_TAB ||
            key == K_ENTER || key == 127 || (key >= K_LEFT && key <= K_ALT);
 }
@@ -60,43 +84,58 @@ const char *ctl_key_name(int key)
     return b;
 }
 
-static int key_parse(const char *s)
+const char *ctl_pad_name(int b) { return b > 0 && b < PB_COUNT ? PB_NAME[b] : "?"; }
+
+static const char *label(int dev, int k) { return dev == DEV_PAD ? PB_LABEL[k] : ctl_key_name(k); }
+
+static int key_parse(int dev, const char *s)
 {
+    if (dev == DEV_PAD) {
+        for (int b = 1; b < PB_COUNT; b++)
+            if (!strcasecmp(PB_NAME[b], s)) return b;
+        return 0;
+    }
     for (int i = 0; i < NNAMED; i++)
         if (!strcmp(NAMED[i].name, s)) return NAMED[i].key;
     if (s[0] && !s[1]) {
         int k = (unsigned char)s[0];
         if (k >= 'A' && k <= 'Z') k += 32;
-        return bindable(k) ? k : 0;
+        return bindable(DEV_KEYS, k) ? k : 0;
     }
     return 0;
 }
 
-bool ctl_has(int key, Control c)
+static bool has(int dev, int key, int c)
 {
     for (int i = 0; i < CT_KEYS; i++)
-        if (keys[c][i] == key) return key != 0;
+        if (binds[dev][c][i] == key) return key != 0;
     return false;
 }
 
-bool ctl_bound(int key)
+static bool bound(int dev, int key)
 {
     for (int c = 0; c < CT_COUNT; c++)
-        if (ctl_has(key, (Control)c)) return true;
+        if (has(dev, key, c)) return true;
     return false;
 }
 
-bool ctl_any(const bool *k, Control c)
+static bool any(int dev, const bool *k, int c)
 {
     for (int i = 0; i < CT_KEYS; i++)
-        if (keys[c][i] && k[keys[c][i]]) return true;
+        if (binds[dev][c][i] && k[binds[dev][c][i]]) return true;
     return false;
 }
 
-static int count_keys(int c)
+bool ctl_has(int key, Control c) { return has(DEV_KEYS, key, c); }
+bool ctl_bound(int key) { return bound(DEV_KEYS, key); }
+bool ctl_any(const bool *k, Control c) { return any(DEV_KEYS, k, c); }
+bool ctl_pad_bound(int b) { return bound(DEV_PAD, b); }
+bool ctl_pad_any(const bool *btn, Control c) { return any(DEV_PAD, btn, c); }
+
+static int count_keys(int dev, int c)
 {
     int n = 0;
-    for (int i = 0; i < CT_KEYS; i++) n += keys[c][i] != 0;
+    for (int i = 0; i < CT_KEYS; i++) n += binds[dev][c][i] != 0;
     return n;
 }
 
@@ -111,40 +150,45 @@ static void find_path(void)
     snprintf(cfg_path, sizeof cfg_path, "%s/controls.txt", cfg_dir);
 }
 
+/* lines are "jump Z SPACE" for keys and "pad-jump A" for buttons */
 void ctl_load(void)
 {
-    memcpy(keys, DEFAULTS, sizeof keys);
+    memcpy(binds, DEFAULTS, sizeof binds);
     find_path();
     FILE *f = cfg_path[0] ? fopen(cfg_path, "r") : NULL;
     if (!f) return;
-    int got[CT_COUNT][CT_KEYS] = { { 0 } };
-    bool have[CT_COUNT] = { 0 };
+    int got[NDEV][CT_COUNT][CT_KEYS] = { { { 0 } } };
+    bool have[NDEV][CT_COUNT] = { { 0 } };
     char line[256];
     while (fgets(line, sizeof line, f)) {
         char *sv, *tok = strtok_r(line, " \t\r\n", &sv);
         if (!tok || tok[0] == '#') continue;
+        int dev = DEV_KEYS;
+        if (!strncmp(tok, "pad-", 4)) { dev = DEV_PAD; tok += 4; }
         int c = 0;
         while (c < CT_COUNT && strcmp(tok, CT_FILE[c])) c++;
-        if (c == CT_COUNT || have[c]) continue;
+        if (c == CT_COUNT || have[dev][c]) continue;
         int n = 0;
         while (n < CT_KEYS && (tok = strtok_r(NULL, " \t\r\n", &sv))) {
-            int k = key_parse(tok);
+            int k = key_parse(dev, tok);
             bool dup = !k;
             for (int a = 0; a < CT_COUNT && !dup; a++)
-                for (int i = 0; i < CT_KEYS; i++) dup |= got[a][i] == k;
-            if (!dup) got[c][n++] = k;
+                for (int i = 0; i < CT_KEYS; i++) dup |= got[dev][a][i] == k;
+            if (!dup) got[dev][c][n++] = k;
         }
-        have[c] = n > 0;
+        have[dev][c] = n > 0;
     }
     fclose(f);
-    for (int c = 0; c < CT_COUNT; c++)
-        if (have[c]) memcpy(keys[c], got[c], sizeof keys[c]);
-    /* an action the file left out keeps its defaults, less any key now used elsewhere */
-    for (int c = 0; c < CT_COUNT; c++) {
-        if (have[c]) continue;
-        for (int i = 0; i < CT_KEYS; i++)
-            for (int a = 0; a < CT_COUNT; a++)
-                if (a != c && have[a] && ctl_has(keys[c][i], (Control)a)) keys[c][i] = 0;
+    for (int d = 0; d < NDEV; d++) {
+        for (int c = 0; c < CT_COUNT; c++)
+            if (have[d][c]) memcpy(binds[d][c], got[d][c], sizeof binds[d][c]);
+        /* an action the file left out keeps its defaults, less any key now used elsewhere */
+        for (int c = 0; c < CT_COUNT; c++) {
+            if (have[d][c]) continue;
+            for (int i = 0; i < CT_KEYS; i++)
+                for (int a = 0; a < CT_COUNT; a++)
+                    if (a != c && have[d][a] && has(d, binds[d][c][i], a)) binds[d][c][i] = 0;
+        }
     }
 }
 
@@ -162,13 +206,17 @@ static int ctl_save(void)
     snprintf(tmp, sizeof tmp, "%s.tmp", cfg_path);
     FILE *f = fopen(tmp, "w");
     if (!f) return -1;
-    fprintf(f, "# bunzi controls: an action, then up to %d keys (change them on the title screen)\n", CT_KEYS);
-    for (int c = 0; c < CT_COUNT; c++) {
-        fprintf(f, "%s", CT_FILE[c]);
-        for (int i = 0; i < CT_KEYS; i++)
-            if (keys[c][i]) fprintf(f, " %s", ctl_key_name(keys[c][i]));
-        fputc('\n', f);
-    }
+    fprintf(f, "# bunzi controls (change them on the title screen): an action, then up to %d keys.\n"
+               "# pad- lines are the gamepad's buttons; A B X Y are the bottom, right, left and\n"
+               "# top face buttons, whatever the pad calls them.\n", CT_KEYS);
+    for (int d = 0; d < NDEV; d++)
+        for (int c = 0; c < CT_COUNT; c++) {
+            fprintf(f, "%s%s", d == DEV_PAD ? "pad-" : "", CT_FILE[c]);
+            for (int i = 0; i < CT_KEYS; i++)
+                if (binds[d][c][i])
+                    fprintf(f, " %s", d == DEV_PAD ? PB_NAME[binds[d][c][i]] : ctl_key_name(binds[d][c][i]));
+            fputc('\n', f);
+        }
     bool ok = fflush(f) == 0 && fsync(fileno(f)) == 0;
     ok = fclose(f) == 0 && ok;
     if (!ok || rename(tmp, cfg_path)) { unlink(tmp); return -1; }
@@ -194,11 +242,15 @@ static int ctl_save(void)
 #define STAGE_X0  44
 #define STAGE_X1  250
 #define BTN_X     360
-#define NROWS     (CT_COUNT + 1)    /* the last row: DEFAULTS / DONE */
+#define TAB_Y     45            /* the keyboard / gamepad tabs, either side of the heading */
+#define TAB_X0    58
+#define TAB_X1    422
+#define NROWS     (CT_COUNT + 2)    /* the tabs (row -1), the actions, DEFAULTS / DONE */
+#define HOLD_CANCEL 0.6f        /* holding B this long while waiting for a button cancels */
 
 static const uint32_t INK = 0x10102a, GOLD = 0xffd860, DIM = 0xa8a0d0, WHITE = 0xf4f0e0, PINK = 0xff8aa0,
                       FACE = 0xf2ead6, FACE_HI = 0xfffbef, LIP = 0xb4a487, KEYTXT = 0x2c2450,
-                      HOLE = 0x5a5288;
+                      HOLE = 0x5a5288, OFF = 0x6c6494;
 
 struct CtlScreen {
     Image frame;
@@ -206,14 +258,15 @@ struct CtlScreen {
     const Sprite *idle[2], *run[6], *jump, *fall, *land, *dash[3], *start, *alert, *ground;
     const Sprite *decor[4];
     const Sprite *puff[3], *dust[4];
-    int row, col, bcol;
-    bool listening;
+    int dev, row, col, bcol;
+    bool listening, pad_on;
     float t, sel_t, demo_t, listen_t;
+    float b_t0;                 /* when B went down while waiting for a button, or -1 */
     char msg[64];
     uint32_t msg_c;
     float msg_t;
     float flash[CT_COUNT][CT_KEYS];
-    bool held[K_MAX];
+    bool held[K_MAX], pheld[PB_COUNT];
     bool save_failed;
 };
 
@@ -260,6 +313,7 @@ CtlScreen *ctl_screen_create(const char *asset_dir, char *err, size_t errn)
           (s->decor[3] = atlas_find(h, "flower2"));
     if (!ok) { snprintf(err, errn, "controls screen: sprites missing"); goto fail; }
     s->bcol = 1;
+    s->b_t0 = -1;
     return s;
 fail:
     ctl_screen_destroy(s);
@@ -274,26 +328,35 @@ void ctl_screen_destroy(CtlScreen *s)
     free(s);
 }
 
-void ctl_screen_open(CtlScreen *s)
+void ctl_screen_open(CtlScreen *s, bool pad)
 {
+    s->dev = pad ? DEV_PAD : DEV_KEYS;
+    s->pad_on = pad;
     s->row = s->col = 0;
     s->bcol = 1;
     s->listening = false;
+    s->b_t0 = -1;
     s->t = s->sel_t = s->demo_t = 0;
     s->msg_t = 0;
     memset(s->flash, 0, sizeof s->flash);
     memset(s->held, 0, sizeof s->held);
+    memset(s->pheld, 0, sizeof s->pheld);
 }
 
-void ctl_screen_select(CtlScreen *s, int row, bool listening)
+void ctl_screen_select(CtlScreen *s, int row, bool pad, bool listening)
 {
-    s->row = row < 0 ? 0 : row > CT_COUNT ? CT_COUNT : row;
-    s->listening = listening && s->row < CT_COUNT;
+    s->dev = pad ? DEV_PAD : DEV_KEYS;
+    s->pad_on = true;
+    s->row = row < -1 ? -1 : row > CT_COUNT ? CT_COUNT : row;
+    s->listening = listening && s->row >= 0 && s->row < CT_COUNT;
 }
 
-static void say(CtlScreen *s, uint32_t c, const char *fmt, const char *a, const char *b)
+static void say(CtlScreen *s, uint32_t c, const char *fmt, ...)
 {
-    snprintf(s->msg, sizeof s->msg, fmt, a, b);
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(s->msg, sizeof s->msg, fmt, ap);
+    va_end(ap);
     s->msg_c = c;
     s->msg_t = 2.5f;
 }
@@ -304,8 +367,9 @@ static void saved(CtlScreen *s)
 }
 
 /* a hotkey this key used to be, now that an action has it */
-static const char *shortcut(int key)
+static const char *shortcut(int dev, int key)
 {
+    if (dev == DEV_PAD) return key == PB_START ? "OVERLAY" : NULL;
     switch (key) {
     case 'n': return "MUTE";
     case 'q': return "LEAVE THE LEVEL";
@@ -317,33 +381,82 @@ static const char *shortcut(int key)
 
 static void assign(CtlScreen *s, int key)
 {
-    int r = s->row, c = s->col, old = keys[r][c];
+    int d = s->dev, r = s->row, c = s->col, old = binds[d][r][c];
+    int (*tab)[CT_KEYS] = binds[d];
     char kn[16];
-    snprintf(kn, sizeof kn, "%s", ctl_key_name(key));
+    snprintf(kn, sizeof kn, "%s", label(d, key));
     if (old == key) { s->flash[r][c] = 1; snd_play(SFX_SELECT, 1.0f, 1.0f, 0); return; }
     s->msg_t = 0;
     for (int r2 = 0; r2 < CT_COUNT; r2++)
         for (int c2 = 0; c2 < CT_KEYS; c2++) {
-            if (keys[r2][c2] != key) continue;
-            if (r2 != r && !old && count_keys(r2) == 1) {
-                say(s, PINK, "%s IS THE ONLY %s KEY", kn, CT_LABEL[r2]);
+            if (tab[r2][c2] != key) continue;
+            if (r2 != r && !old && count_keys(d, r2) == 1) {
+                say(s, PINK, "%s IS THE ONLY %s %s", kn, CT_LABEL[r2], WORD[d]);
                 snd_play(SFX_MENU, 1.0f, 0.7f, 0);
                 return;
             }
-            keys[r2][c2] = old;     /* a swap, or a move within the row */
+            tab[r2][c2] = old;      /* a swap, or a move within the row */
             s->flash[r2][c2] = 1;
-            if (r2 != r && old) say(s, GOLD, "SWAPPED: %s NOW HAS %s", CT_LABEL[r2], ctl_key_name(old));
+            if (r2 != r && old) say(s, GOLD, "SWAPPED: %s NOW HAS %s", CT_LABEL[r2], label(d, old));
             else if (r2 != r) say(s, GOLD, "%s TAKEN FROM %s", kn, CT_LABEL[r2]);
         }
-    keys[r][c] = key;
+    tab[r][c] = key;
     s->flash[r][c] = 1;
-    const char *sc = shortcut(key);
-    if (sc && s->msg_t <= 0) say(s, DIM, "%s IS NO LONGER THE %s KEY", kn, sc);
+    const char *sc = shortcut(d, key);
+    if (sc && s->msg_t <= 0) say(s, DIM, "%s IS NO LONGER THE %s %s", kn, sc, WORD[d]);
     snd_play(SFX_SELECT, 1.0f, 1.0f, 0);
     saved(s);
 }
 
-bool ctl_screen_update(CtlScreen *s, const CtlNav *in, const bool *pressed, const bool *down, float dt)
+static void stop_listening(CtlScreen *s)
+{
+    s->listening = false;
+    s->b_t0 = -1;
+    snd_play(SFX_MENU, 1.0f, 0.8f, 0);
+}
+
+static void listen(CtlScreen *s, const CtlNav *in, const bool *pressed, const bool *ppressed, const bool *pdown)
+{
+    if (s->dev == DEV_KEYS) {
+        if (in->back) { stop_listening(s); return; }
+        for (int k = 0; k < K_MAX && pressed; k++)
+            if (pressed[k] && bindable(DEV_KEYS, k)) {
+                s->listening = false;
+                assign(s, k);
+                return;
+            }
+        return;
+    }
+    if (in->esc) { stop_listening(s); return; }
+    if (s->b_t0 >= 0) {         /* B: a tap gives it to the action, holding it cancels */
+        if (pdown && pdown[PB_B]) {
+            if (s->t - s->b_t0 >= HOLD_CANCEL) stop_listening(s);
+        } else {
+            s->b_t0 = -1;
+            s->listening = false;
+            assign(s, PB_B);
+        }
+        return;
+    }
+    for (int b = 1; b < PB_COUNT && ppressed; b++)
+        if (ppressed[b]) {
+            if (b == PB_B) { s->b_t0 = s->t; return; }
+            s->listening = false;
+            assign(s, b);
+            return;
+        }
+}
+
+static void flip(CtlScreen *s)
+{
+    s->dev ^= 1;
+    s->msg_t = 0;
+    s->sel_t = 0;
+    snd_play(SFX_MENU, 1.0f, s->dev ? 1.12f : 0.9f, 0);
+}
+
+bool ctl_screen_update(CtlScreen *s, const CtlNav *in, const bool *pressed, const bool *down,
+                       const bool *ppressed, const bool *pdown, float dt)
 {
     s->t += dt;
     s->sel_t += dt;
@@ -353,29 +466,25 @@ bool ctl_screen_update(CtlScreen *s, const CtlNav *in, const bool *pressed, cons
         for (int c = 0; c < CT_KEYS; c++)
             if (s->flash[r][c] > 0) s->flash[r][c] = fmaxf(0, s->flash[r][c] - dt * 1.6f);
     if (!in) return false;
+    s->pad_on = in->pad_on;
     if (down) memcpy(s->held, down, sizeof s->held);
+    if (pdown) memcpy(s->pheld, pdown, sizeof s->pheld);
+    else memset(s->pheld, 0, sizeof s->pheld);
     if (s->listening) {
-        s->listen_t += dt;
-        if (in->back) {
-            s->listening = false;
-            snd_play(SFX_MENU, 1.0f, 0.8f, 0);
-            return false;
-        }
-        for (int k = 0; k < K_MAX && pressed; k++)
-            if (pressed[k] && bindable(k)) {
-                s->listening = false;
-                assign(s, k);
-                break;
-            }
+        listen(s, in, pressed, ppressed, pdown);
         return false;
     }
     if (in->back) { snd_play(SFX_MENU, 1.0f, 0.8f, 0); return true; }
+    if (in->swap) flip(s);
     if (in->up || in->down) {
-        s->row = (s->row + (in->up ? NROWS - 1 : 1)) % NROWS;
+        s->row = (s->row + 1 + (in->up ? NROWS - 1 : 1)) % NROWS - 1;
         s->sel_t = s->demo_t = 0;
         snd_play(SFX_MENU, 1.0f, 1.0f, 0);
     }
-    if (s->row < CT_COUNT) {
+    int (*tab)[CT_KEYS] = binds[s->dev];
+    if (s->row < 0) {
+        if (in->left || in->right || in->confirm) flip(s);
+    } else if (s->row < CT_COUNT) {
         if (in->left || in->right) {
             s->col = (s->col + (in->left ? CT_KEYS - 1 : 1)) % CT_KEYS;
             s->sel_t = 0;
@@ -384,14 +493,15 @@ bool ctl_screen_update(CtlScreen *s, const CtlNav *in, const bool *pressed, cons
         if (in->confirm) {
             s->listening = true;
             s->listen_t = 0;
+            s->b_t0 = -1;
             s->msg_t = 0;
             snd_play(SFX_SELECT, 1.0f, 1.2f, 0);
-        } else if (in->clear && keys[s->row][s->col]) {
-            if (count_keys(s->row) == 1) {
-                say(s, PINK, "%s NEEDS A KEY%s", CT_LABEL[s->row], "");
+        } else if (in->clear && tab[s->row][s->col]) {
+            if (count_keys(s->dev, s->row) == 1) {
+                say(s, PINK, "%s NEEDS A %s", CT_LABEL[s->row], WORD[s->dev]);
                 snd_play(SFX_MENU, 1.0f, 0.7f, 0);
             } else {
-                keys[s->row][s->col] = 0;
+                tab[s->row][s->col] = 0;
                 snd_play(SFX_MENU, 1.0f, 0.85f, 0);
                 saved(s);
             }
@@ -400,10 +510,10 @@ bool ctl_screen_update(CtlScreen *s, const CtlNav *in, const bool *pressed, cons
         if (in->left || in->right) { s->bcol ^= 1; snd_play(SFX_MENU, 1.0f, 1.0f, 0); }
         if (in->confirm) {
             if (s->bcol) { snd_play(SFX_SELECT, 1.0f, 1.0f, 0); return true; }
-            memcpy(keys, DEFAULTS, sizeof keys);
+            memcpy(tab, DEFAULTS[s->dev], sizeof binds[0]);
             for (int r = 0; r < CT_COUNT; r++)
-                for (int c = 0; c < CT_KEYS; c++) s->flash[r][c] = keys[r][c] ? 1 : 0;
-            say(s, GOLD, "DEFAULTS RESTORED%s%s", "", "");
+                for (int c = 0; c < CT_KEYS; c++) s->flash[r][c] = tab[r][c] ? 1 : 0;
+            say(s, GOLD, "%s DEFAULTS RESTORED", s->dev ? "GAMEPAD" : "KEYBOARD");
             snd_play(SFX_RECORD, 0.8f, 1.0f, 0);
             saved(s);
         }
@@ -472,7 +582,58 @@ static void rrect(Canvas *cv, int x, int y, int w, int h, uint32_t c)
     gfx_fill(cv, x + w - 1, y + 1, 1, h - 2, c);
 }
 
-static void keycap(Canvas *cv, int x, int y, int key, bool sel, bool listen, bool held, float flash, float t)
+/* the face buttons as a diamond of four with one lit, and the d-pad as a cross
+ * with one arm lit: code \1-\11 as in PB_LABEL. 11x11 big, 6x6 / 7x7 small. */
+static void pad_icon(Canvas *cv, int x, int y, int code, bool big, uint32_t on, uint32_t off)
+{
+    if (code <= 4) {
+        static const int P[4][2] = { { 1, 2 }, { 2, 1 }, { 0, 1 }, { 1, 0 } };     /* A B X Y */
+        int d = big ? 3 : 2, st = big ? 4 : 2;
+        for (int i = 0; i < 4; i++)
+            gfx_fill(cv, x + P[i][0] * st, y + P[i][1] * st, d, d, i == code - 1 ? on : off);
+        return;
+    }
+    int n = big ? 11 : 7, a = (n - 3) / 2;
+    bool all = code == 9;
+    gfx_fill(cv, x + a, y, 3, n, all ? on : off);
+    gfx_fill(cv, x, y + a, n, 3, all ? on : off);
+    switch (code) {
+    case 5: gfx_fill(cv, x + a, y, 3, a, on); break;
+    case 6: gfx_fill(cv, x + a, y + n - a, 3, a, on); break;
+    case 7: gfx_fill(cv, x, y + a, a, 3, on); break;
+    case 8: gfx_fill(cv, x + n - a, y + a, a, 3, on); break;
+    }
+}
+
+/* small text that may hold \1-\11 button pictures */
+static int glyph_w(unsigned char ch) { return ch >= 1 && ch <= 4 ? 8 : ch >= 5 && ch <= 9 ? 9 : 4; }
+
+static int rich_width(const char *m)
+{
+    int w = 0;
+    for (; *m; m++) w += glyph_w((unsigned char)*m);
+    return w ? w - 1 : 0;
+}
+
+static void rich(Canvas *cv, int x, int y, const char *m, uint32_t c)
+{
+    for (; *m; m++) {
+        unsigned char ch = (unsigned char)*m;
+        if (ch >= 1 && ch <= 9) {
+            int ix = x + 1, iy = y - (ch <= 4 ? 0 : 1);
+            pad_icon(cv, ix + 1, iy + 1, ch, false, INK, INK);
+            pad_icon(cv, ix, iy, ch, false, c, gfx_mix(c, INK, 120));
+        } else if (ch != ' ') {
+            char b[2] = { (char)ch, 0 };
+            gfx_text(cv, x + 1, y + 1, b, INK);
+            gfx_text(cv, x, y, b, c);
+        }
+        x += glyph_w(ch);
+    }
+}
+
+static void keycap(Canvas *cv, int x, int y, int dev, int key, bool sel, bool listen, bool held, float flash,
+                   float t)
 {
     int w = SLOT_W, h = SLOT_H;
     if (sel) {
@@ -505,11 +666,14 @@ static void keycap(Canvas *cv, int x, int y, int key, bool sel, bool listen, boo
     gfx_fill(cv, x + 3, y + 1 + p, w - 6, 1, hi);
     int fy = y + 1 + p, fh = h - 2 - p - lip;       /* the face, for centring */
     uint32_t tc = KEYTXT;
-    if (key >= K_LEFT && key <= K_DOWN) arrow(cv, x + (w - 10) / 2, fy + (fh - 10) / 2 + 1, key, tc);
-    else {
-        const char *n = ctl_key_name(key);
+    const char *n = label(dev, key);
+    unsigned char ic = (unsigned char)n[0];
+    if (dev == DEV_KEYS && key >= K_LEFT && key <= K_DOWN)
+        arrow(cv, x + (w - 10) / 2, fy + (fh - 10) / 2 + 1, key, tc);
+    else if (dev == DEV_PAD && ic >= 1 && ic <= 9)
+        pad_icon(cv, x + (w - 11) / 2, fy + (fh - 11) / 2, ic, true, tc, gfx_mix(LIP, KEYTXT, 70));
+    else
         gfx_text_scaled(cv, x + (w - gfx_text_width(n, 2)) / 2, fy + (fh - 10) / 2 + 1, 2, n, tc);
-    }
     if (flash > 0)                          /* a few sparks fly off a newly set key */
         for (int k = 0; k < 6; k++) {
             uint32_t hh = hash2(k, x * 7 + y);
@@ -517,6 +681,45 @@ static void keycap(Canvas *cv, int x, int y, int key, bool sel, bool listen, boo
             int sx = x + w / 2 + (int)(cosf(a) * (w / 2 + 4 + u * 14)), sy = y + h / 2 + (int)(sinf(a) * (8 + u * 10));
             star(cv, sx, sy, flash > 0.5f ? 2 : 1, GOLD);
         }
+}
+
+/* the tabs' pictures, drawn at 2x: x the body, o a dark hole */
+static void icon2(Canvas *cv, int x, int y, const char *const *rows, int nr, uint32_t c)
+{
+    for (int j = 0; j < nr; j++)
+        for (int i = 0; rows[j][i]; i++) {
+            char ch = rows[j][i];
+            if (ch == '.') continue;
+            gfx_fill(cv, x + i * 2, y + j * 2, 2, 2, ch == 'x' ? c : INK);
+        }
+}
+
+static void tabs(const CtlScreen *s, Canvas *cv)
+{
+    static const char *const KB[5] = {
+        "xxxxxxxxxxx", "xoxoxoxoxox", "xxxxxxxxxxx", "xxooooooxxx", "xxxxxxxxxxx",
+    };
+    static const char *const GP[6] = {
+        ".xxxxxxxxx.", "xxoxxxxxoxx", "xoooxxxoxox", "xxoxxxxxoxx", "xxxxxxxxxxx", "xxx.....xxx",
+    };
+    static const char *const NAME[NDEV] = { "KEYBOARD", "GAMEPAD" };
+    for (int d = 0; d < NDEV; d++) {
+        bool on = s->dev == d, foc = on && s->row < 0;
+        int tw = gfx_text_width(NAME[d], 2), w = 22 + 6 + tw;
+        int x = d == DEV_KEYS ? TAB_X0 : TAB_X1 - w;
+        uint32_t c = on ? GOLD : OFF;
+        if (on) {
+            float pu = 0.5f + 0.5f * sinf(s->sel_t * 5);
+            gfx_glow(cv, x + w / 2, TAB_Y + 5, w / 2 + 10, 0xffb040, (int)((foc ? 30 : 14) + (foc ? 25 : 0) * pu));
+        }
+        if (foc) {
+            paw(cv, x - 12, TAB_Y + 2, GOLD);
+            paw(cv, x + w + 7, TAB_Y + 2, GOLD);
+        }
+        if (d == DEV_KEYS) { icon2(cv, x + 1, TAB_Y + 1, KB, 5, INK); icon2(cv, x, TAB_Y, KB, 5, c); }
+        else { icon2(cv, x + 1, TAB_Y, GP, 6, INK); icon2(cv, x, TAB_Y - 1, GP, 6, c); }
+        txt(cv, x + 28, TAB_Y, 2, NAME[d], on ? GOLD : OFF);
+    }
 }
 
 /* the bunny shows what the chosen action does */
@@ -618,10 +821,19 @@ void ctl_screen_render(const CtlScreen *s, Canvas *cv)
     txt(cv, hx, 42, 3, head, GOLD);
     paw(cv, hx - 14, 46, GOLD);
     paw(cv, hx + hw + 9, 46, GOLD);
-    const char *hint = s->listening ? "PRESS THE NEW KEY  -  ESC CANCELS"
-                                    : "ARROWS CHOOSE   ENTER CHANGE   BACKSPACE CLEAR   ESC BACK";
-    gfx_text(cv, (cv->w - gfx_text_width(hint, 1)) / 2 + 1, 59, hint, INK);
-    gfx_text(cv, (cv->w - gfx_text_width(hint, 1)) / 2, 58, hint, DIM);
+    tabs(s, cv);
+
+    bool pad = s->dev == DEV_PAD;
+    const char *hint;
+    if (s->listening)
+        hint = pad ? "PRESS THE NEW BUTTON  -  HOLD \2 OR ESC TO CANCEL" : "PRESS THE NEW KEY  -  ESC CANCELS";
+    else if (pad && s->pad_on)
+        hint = "\11 CHOOSE   \1 CHANGE   \4 CLEAR   \2 BACK   LB RB KEYBOARD";
+    else if (pad)
+        hint = "NO GAMEPAD FOUND   -   ARROWS CHOOSE   ENTER CHANGE   ESC BACK   TAB KEYBOARD";
+    else
+        hint = "ARROWS CHOOSE   ENTER CHANGE   BKSP CLEAR   ESC BACK   TAB GAMEPAD";
+    rich(cv, (cv->w - rich_width(hint)) / 2, 58, hint, pad && !s->pad_on && !s->listening ? PINK : DIM);
 
     for (int r = 0; r < CT_COUNT; r++) {
         int y = ROW_Y + r * ROW_DY;
@@ -629,10 +841,10 @@ void ctl_screen_render(const CtlScreen *s, Canvas *cv)
         if (on) gfx_tint(cv, LABEL_X - 6, y - 2, SLOT_X + CT_KEYS * SLOT_DX - LABEL_X, SLOT_H + 4, 0xffd860, 22);
         txt(cv, LABEL_X, y + 3, 2, CT_LABEL[r], on ? GOLD : DIM);
         for (int c = 0; c < CT_KEYS; c++) {
-            int k = keys[r][c];
+            int k = binds[s->dev][r][c];
             bool sel = on && c == s->col;
-            keycap(cv, SLOT_X + c * SLOT_DX, y, k, sel, sel && s->listening, k && s->held[k],
-                   s->flash[r][c], s->sel_t);
+            bool held = k && (pad ? s->pheld[k] : s->held[k]);
+            keycap(cv, SLOT_X + c * SLOT_DX, y, s->dev, k, sel, sel && s->listening, held, s->flash[r][c], s->sel_t);
         }
     }
 
@@ -641,16 +853,20 @@ void ctl_screen_render(const CtlScreen *s, Canvas *cv)
     char b[80];
     const char *m;
     uint32_t mc = DIM;
+    int sc = 1;
     if (s->listening) {
-        snprintf(b, sizeof b, "PRESS A KEY FOR %s", CT_LABEL[s->row]);
+        if (s->b_t0 >= 0) snprintf(b, sizeof b, "KEEP HOLDING TO CANCEL");
+        else snprintf(b, sizeof b, "PRESS A %s FOR %s", WORD[s->dev], CT_LABEL[s->row]);
         m = b;
         mc = ((int)(s->t * 3) & 1) ? GOLD : WHITE;
+        sc = 2;
     } else if (s->msg_t > 0) { m = s->msg; mc = s->msg_c; }
     else if (s->save_failed) { m = "COULD NOT SAVE THE CONTROLS"; mc = PINK; }
-    else if (s->row < CT_COUNT) m = CT_HELP[s->row];
-    else m = s->bcol ? "BACK TO THE TITLE" : "PUT EVERY KEY BACK AS IT WAS";
-    int sc = s->listening ? 2 : 1;
-    txt(cv, (STAGE_X0 + STAGE_X1 - gfx_text_width(m, sc)) / 2, 179, sc, m, mc);
+    else if (s->row < 0) m = "SET UP THE KEYBOARD OR THE GAMEPAD";
+    else if (s->row < CT_COUNT) m = CT_HELP[s->dev][s->row];
+    else m = s->bcol ? "BACK TO THE TITLE" : pad ? "PUT EVERY BUTTON BACK AS IT WAS" : "PUT EVERY KEY BACK AS IT WAS";
+    if (sc == 1) rich(cv, (STAGE_X0 + STAGE_X1 - rich_width(m)) / 2, 179, m, mc);
+    else txt(cv, (STAGE_X0 + STAGE_X1 - gfx_text_width(m, sc)) / 2, 179, sc, m, mc);
 
     static const char *const BTN[2] = { "DEFAULTS", "DONE" };
     for (int i = 0; i < 2; i++) {

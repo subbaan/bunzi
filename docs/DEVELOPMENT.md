@@ -24,8 +24,9 @@ teleport (`BUNZI_DUMP_TX`, dump only) are marked practice and not recorded.
 autoplays and prints frame statistics, `--dump FILE` renders one frame to a
 PPM, `--level N` skips the title and starts at level N, `--fps`, `--mode`,
 `--scale`, `--assets DIR`. `BUNZI_DUMP_TITLE=SECS` with `--dump`
-renders the title screen, and `BUNZI_DUMP_CONTROLS="ROW [SECS [listen]]"`
-the controls screen over it (row 0–5 an action, 6 the buttons). See `--help`.
+renders the title screen, and `BUNZI_DUMP_CONTROLS="ROW [SECS [MODE]]"`
+the controls screen over it (row -1 the keyboard / gamepad tabs, 0–5 an
+action, 6 the buttons; MODE `listen`, `pad` or `pad-listen`). See `--help`.
 
 `--show-fps` shows the frame rate kitty is actually displaying in the
 bottom-left corner (green at the target rate, amber below it).
@@ -59,7 +60,7 @@ in the file. The enemy time bonuses are per kind, in `KILL_BONUS` in
 - `src/` – engine: `term.c` (tty, kitty keyboard), `kgfx.c` (kitty graphics
   output), `pad.c` (SDL3 gamepad), `assets.c` (PNG, atlas, sprite drawing),
   `level.c` (text levels), `game.c` (gameplay + rendering), `results.c` (results
-  screen and Top 10), `title.c` (title screen), `controls.c` (key bindings,
+  screen and Top 10), `title.c` (title screen), `controls.c` (key and button bindings,
   `~/.config/bunzi/controls.txt`, and the controls screen), `main.c` (loop).
 - `assets/<level>/` – one folder per level with its `levelN.txt` and `gen/`:
   `sprites.png` + `sprites.txt` (the sprite atlas: name, x, y, w, h, anchor)

@@ -103,7 +103,10 @@ static void usage(FILE *f)
         "          $XDG_CONFIG_HOME/bunzi/controls.txt, ~/.config/bunzi). A shortcut\n"
         "          key given to an action stops being a shortcut; esc always works.\n"
         "Gamepad:  d-pad/left stick move, A jump, X/RB/RT run, back restart,\n"
-        "          start debug overlay, back+start back to the title.\n"
+        "          start debug overlay, back+start back to the title. The buttons\n"
+        "          are the defaults and change under CONTROLS too (LB/RB or tab\n"
+        "          switches the page); the left stick always moves, and the menus\n"
+        "          keep d-pad, A, B and start.\n"
         "\n"
         "Results:  arrows/WASD or d-pad choose, Z/space/enter or A select; initials:\n"
         "          type them or up/down, enter when done.\n"
@@ -112,7 +115,8 @@ static void usage(FILE *f)
         "enemy stomped, in $XDG_DATA_HOME/bunzi/scores.txt (~/.local/share/bunzi).\n"
         "\n"
         "BUNZI_DUMP_TITLE=SECS with --dump renders the title screen instead, and\n"
-        "BUNZI_DUMP_CONTROLS=\"ROW [SECS [listen]]\" the controls screen over it;\n"
+        "BUNZI_DUMP_CONTROLS=\"ROW [SECS [listen|pad|pad-listen]]\" the controls screen\n"
+        "over it;\n"
         "BUNZI_DUMP_RESULTS=\"COINS KILLS SECS\" adds a results screen (scores read only).\n",
         PLAT_NAME, game_level_count());
 }
@@ -180,9 +184,10 @@ static int dump_frame(const char *assets, int level, const char *path)
             char mode[16] = "";
             sscanf(ce, "%d %f %15s", &row, &secs, mode);
             title_backdrop(ti, true);
-            ctl_screen_open(cs);
-            ctl_screen_select(cs, row, !strcmp(mode, "listen"));
-            for (int i = 0; i < (int)(secs * SIM_HZ); i++) ctl_screen_update(cs, NULL, NULL, NULL, 1.0f / SIM_HZ);
+            ctl_screen_open(cs, false);
+            ctl_screen_select(cs, row, strstr(mode, "pad") != NULL, strstr(mode, "listen") != NULL);
+            for (int i = 0; i < (int)(secs * SIM_HZ); i++)
+                ctl_screen_update(cs, NULL, NULL, NULL, NULL, NULL, 1.0f / SIM_HZ);
         }
         title_render(ti, &cv);
         if (cs) ctl_screen_render(cs, &cv);
@@ -239,7 +244,7 @@ static void scene_idle(Scene *sc, float dt)
 {
     if (sc->on_title) {
         title_update(sc->title, NULL, dt, NULL);
-        if (sc->on_ctl) ctl_screen_update(sc->ctl, NULL, NULL, NULL, dt);
+        if (sc->on_ctl) ctl_screen_update(sc->ctl, NULL, NULL, NULL, NULL, NULL, dt);
     } else {
         Actions none = { 0 };
         game_update(sc->game, &none, dt);
@@ -269,7 +274,7 @@ static TitleInput menu_input(const bool *pr, const bool *pad_edge, const PadStat
         .left    = pr[K_LEFT] || menu_key(pr, 'a', CT_LEFT) || ctl_any(pr, CT_LEFT) || pad_edge[2],
         .right   = pr[K_RIGHT] || menu_key(pr, 'd', CT_RIGHT) || ctl_any(pr, CT_RIGHT) || pad_edge[3],
         .confirm = pr[K_ENTER] || menu_key(pr, ' ', CT_JUMP) || menu_key(pr, 'z', CT_JUMP) ||
-                   pad->jump_pressed || pad->start_pressed,
+                   pad->a_pressed || pad->start_pressed,
     };
 }
 
@@ -552,7 +557,7 @@ int main(int argc, char **argv)
             ti = (TitleInput){
                 .up = pr[K_UP] || pad_edge[0], .down = pr[K_DOWN] || pad_edge[1],
                 .left = pr[K_LEFT] || pad_edge[2], .right = pr[K_RIGHT] || pad_edge[3],
-                .confirm = pad.jump_pressed || pad.start_pressed, .back = pad.cancel_pressed,
+                .confirm = pad.a_pressed || pad.start_pressed, .back = pad.cancel_pressed,
             };
         } else if (in_res) {
             ti = menu_input(pr, pad_edge, &pad);
@@ -562,9 +567,12 @@ int main(int argc, char **argv)
             nav = (CtlNav){
                 .up = pr[K_UP] || pad_edge[0], .down = pr[K_DOWN] || pad_edge[1],
                 .left = pr[K_LEFT] || pad_edge[2], .right = pr[K_RIGHT] || pad_edge[3],
-                .confirm = pr[K_ENTER] || pr[' '] || pad.jump_pressed || pad.start_pressed,
-                .clear = pr[127] || pr[8],
+                .confirm = pr[K_ENTER] || pr[' '] || pad.a_pressed || pad.start_pressed,
+                .clear = pr[127] || pr[8] || pad.btn_pressed[PB_Y],
                 .back = pr[K_ESC] || pad.cancel_pressed || pad.back_pressed,
+                .esc = pr[K_ESC],
+                .swap = pr[K_TAB] || pad.btn_pressed[PB_LB] || pad.btn_pressed[PB_RB],
+                .pad_on = pad.connected,
             };
         } else if (scene.on_title) {
             if (pr[K_ESC] || hot(pr, 'q')) break;
@@ -586,8 +594,9 @@ int main(int argc, char **argv)
             }
             if (!in_res) {
                 if (hot(pr, 'g')) g.sc = (ScaleMode)((g.sc + 1) % SC_COUNT);
-                if (hot(pr, K_TAB) || (pad.start_pressed && !pad.back)) hud = !hud;
-                if (ctl_any(pr, CT_RESTART) || (pad.back_pressed && !pad.start)) game_restart(game);
+                if (hot(pr, K_TAB) || (pad.start_pressed && !pad.back && !ctl_pad_bound(PB_START))) hud = !hud;
+                if (ctl_any(pr, CT_RESTART) || (ctl_pad_any(pad.btn_pressed, CT_RESTART) && !(pad.start && pad.back)))
+                    game_restart(game);
                 for (int i = 0; i < 9 && i < game_level_count(); i++)
                     if (hot(pr, '1' + i)) game_set_level(game, i, err, sizeof err);
             }
@@ -600,14 +609,14 @@ int main(int argc, char **argv)
         if (scene.on_title && !scene.on_ctl && hot(pr, K_TAB)) hud = !hud;
 
         Actions act = {
-            .left  = ctl_any(d, CT_LEFT) || pad.left,
-            .right = ctl_any(d, CT_RIGHT) || pad.right,
+            .left  = ctl_any(d, CT_LEFT) || ctl_pad_any(pad.btn, CT_LEFT) || pad.stick_left,
+            .right = ctl_any(d, CT_RIGHT) || ctl_pad_any(pad.btn, CT_RIGHT) || pad.stick_right,
             .up    = d[K_UP] || pad.up,
-            .down  = ctl_any(d, CT_DOWN) || pad.down,
-            .jump  = ctl_any(d, CT_JUMP) || pad.jump,
-            .run   = ctl_any(d, CT_RUN) || pad.run,
+            .down  = ctl_any(d, CT_DOWN) || ctl_pad_any(pad.btn, CT_DOWN) || pad.stick_down,
+            .jump  = ctl_any(d, CT_JUMP) || ctl_pad_any(pad.btn, CT_JUMP),
+            .run   = ctl_any(d, CT_RUN) || ctl_pad_any(pad.btn, CT_RUN),
         };
-        pending_jump |= ctl_any(pr, CT_JUMP) || pad.jump_pressed;
+        pending_jump |= ctl_any(pr, CT_JUMP) || ctl_pad_any(pad.btn_pressed, CT_JUMP);
         static bool pr_frame[K_MAX];        /* the edges outlive the clear below, for the controls screen */
         memcpy(pr_frame, pr, sizeof pr_frame);
         if (in_res) act = (Actions){ 0 };   /* the bunny waits at the exit */
@@ -624,7 +633,8 @@ int main(int argc, char **argv)
         while (sim_t + DT <= t) {
             if (scene.on_ctl) {
                 title_update(title, NULL, DT, &menu_level);
-                if (ctl_screen_update(ctls, first ? &nav : NULL, pr_frame, d, DT)) {
+                if (ctl_screen_update(ctls, first ? &nav : NULL, pr_frame, d, pad.connected ? pad.btn_pressed : NULL,
+                                      pad.connected ? pad.btn : NULL, DT)) {
                     scene.on_ctl = false;
                     title_backdrop(title, false);
                 }
@@ -633,7 +643,7 @@ int main(int argc, char **argv)
                 if (ta == TA_QUIT) { quit = true; break; }
                 if (ta == TA_CONTROLS && ctls) {
                     scene.on_ctl = true;
-                    ctl_screen_open(ctls);
+                    ctl_screen_open(ctls, pad.a_pressed || pad.start_pressed);   /* chosen with the pad */
                     title_backdrop(title, true);
                 }
                 if (ta == TA_START) {
