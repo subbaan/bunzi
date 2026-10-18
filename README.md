@@ -7,7 +7,7 @@ battles.
 
 ![The title screen](docs/screenshots/title.png)
 
-Version: 0.12.0 · Linux x86_64 · needs the [kitty](https://sw.kovidgoyal.net/kitty/) terminal
+Version: 0.12.1 · Linux x86_64 · needs the [kitty](https://sw.kovidgoyal.net/kitty/) terminal
 
 ## Play it
 
@@ -102,14 +102,22 @@ Water enemies:
 | Title: choose / select | arrows, WASD / Z, space, enter | d-pad / A, start |
 | Title: quit | Esc / Q | B or back (to QUIT) |
 
-The keyboard keys are the defaults. To change them, choose **CONTROLS** on
-the title screen: pick a slot with the arrows, press Enter, then press the new
-key (Backspace clears a slot, Esc goes back). Each action takes up to four
-keys, and the bunny shows what the chosen one does. Giving a key to one action
-takes it from another, swapping keys where it can. Your keys are saved in
-`~/.config/bunzi/controls.txt` (or `$XDG_CONFIG_HOME/bunzi/`). Esc always
-works, and a shortcut key such as N (mute) stops being a shortcut once an
-action has it. The gamepad layout is fixed.
+The keys and buttons above are the defaults. To change them, choose
+**CONTROLS** on the title screen: pick a slot with the arrows, press Enter,
+then press the new key (Backspace clears a slot, Esc goes back). Each action
+takes up to four keys, and the bunny shows what the chosen one does. Giving a
+key to one action takes it from another, swapping keys where it can.
+
+The gamepad has its own page (Tab, or LB / RB on the pad; it opens there when
+you choose CONTROLS with the pad). Press A on a slot, then the new button. Y
+clears a slot, and B goes back; while it waits for a button, a tap of B
+binds B and holding it cancels. The face buttons and d-pad are drawn by
+position, so the pictures match any make of pad. The left stick always moves,
+and the menus keep the d-pad, A, B and Start.
+
+Your keys and buttons are saved in `~/.config/bunzi/controls.txt` (or
+`$XDG_CONFIG_HOME/bunzi/`). Esc always works, and a shortcut such as N (mute)
+or Start (debug overlay) stops being a shortcut once an action has it.
 
 ![The controls screen](docs/screenshots/controls.png)
 

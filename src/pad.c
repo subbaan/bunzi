@@ -11,6 +11,20 @@
 static bool sdl_ok;
 static SDL_Gamepad *pad;
 static bool edge[SDL_GAMEPAD_BUTTON_COUNT];
+static bool trig_was[2];
+
+static const SDL_GamepadButton SDL_OF[PB_COUNT] = {
+    [PB_A] = SDL_GAMEPAD_BUTTON_SOUTH, [PB_B] = SDL_GAMEPAD_BUTTON_EAST,
+    [PB_X] = SDL_GAMEPAD_BUTTON_WEST, [PB_Y] = SDL_GAMEPAD_BUTTON_NORTH,
+    [PB_LB] = SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, [PB_RB] = SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,
+    [PB_LS] = SDL_GAMEPAD_BUTTON_LEFT_STICK, [PB_RS] = SDL_GAMEPAD_BUTTON_RIGHT_STICK,
+    [PB_BACK] = SDL_GAMEPAD_BUTTON_BACK, [PB_START] = SDL_GAMEPAD_BUTTON_START,
+    [PB_UP] = SDL_GAMEPAD_BUTTON_DPAD_UP, [PB_DOWN] = SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+    [PB_LEFT] = SDL_GAMEPAD_BUTTON_DPAD_LEFT, [PB_RIGHT] = SDL_GAMEPAD_BUTTON_DPAD_RIGHT,
+    [PB_P1] = SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1, [PB_P2] = SDL_GAMEPAD_BUTTON_LEFT_PADDLE1,
+    [PB_P3] = SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2, [PB_P4] = SDL_GAMEPAD_BUTTON_LEFT_PADDLE2,
+    [PB_MISC] = SDL_GAMEPAD_BUTTON_MISC1,
+};
 static char err[128];
 
 /* SDL must never write to the terminal we are drawing on. */
@@ -72,7 +86,7 @@ void pad_poll(PadState *ps)
             break;
         }
     }
-    if (!pad) return;
+    if (!pad) { trig_was[0] = trig_was[1] = false; return; }
 
     ps->connected = true;
     const char *nm = SDL_GetGamepadName(pad);
@@ -80,26 +94,39 @@ void pad_poll(PadState *ps)
 
     ps->lx = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX) / 32767.0f;
     ps->ly = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY) / 32767.0f;
+    float lt = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) / 32767.0f;
     float rt = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) / 32767.0f;
 
-    ps->left  = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)  || ps->lx < -STICK_DEADZONE;
-    ps->right = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || ps->lx >  STICK_DEADZONE;
+    for (int b = 1; b < PB_COUNT; b++) {
+        if (b == PB_LT || b == PB_RT) continue;
+        ps->btn[b] = SDL_GetGamepadButton(pad, SDL_OF[b]);
+        ps->btn_pressed[b] = edge[SDL_OF[b]];
+    }
+    ps->btn[PB_LT] = lt > TRIGGER_ON;
+    ps->btn[PB_RT] = rt > TRIGGER_ON;
+    ps->btn_pressed[PB_LT] = ps->btn[PB_LT] && !trig_was[0];
+    ps->btn_pressed[PB_RT] = ps->btn[PB_RT] && !trig_was[1];
+    trig_was[0] = ps->btn[PB_LT];
+    trig_was[1] = ps->btn[PB_RT];
+
+    ps->stick_left  = ps->lx < -STICK_DEADZONE;
+    ps->stick_right = ps->lx >  STICK_DEADZONE;
     /* vertical stick only counts when it points mostly up or down, so running
      * with the thumb angled a little low doesn't trigger down+jump drop-through */
     bool vert = fabsf(ps->ly) >= fabsf(ps->lx);
-    ps->up    = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)    || (vert && ps->ly < -STICK_DEADZONE);
-    ps->down  = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)  || (vert && ps->ly >  STICK_DEADZONE);
+    ps->stick_up    = vert && ps->ly < -STICK_DEADZONE;
+    ps->stick_down  = vert && ps->ly >  STICK_DEADZONE;
+    ps->left  = ps->btn[PB_LEFT]  || ps->stick_left;
+    ps->right = ps->btn[PB_RIGHT] || ps->stick_right;
+    ps->up    = ps->btn[PB_UP]    || ps->stick_up;
+    ps->down  = ps->btn[PB_DOWN]  || ps->stick_down;
 
-    ps->jump  = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_SOUTH);
-    ps->run   = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST) ||
-                SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) || rt > TRIGGER_ON;
-    ps->start = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START);
-    ps->back  = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK);
-
-    ps->jump_pressed  = edge[SDL_GAMEPAD_BUTTON_SOUTH];
-    ps->start_pressed = edge[SDL_GAMEPAD_BUTTON_START];
-    ps->back_pressed  = edge[SDL_GAMEPAD_BUTTON_BACK];
-    ps->cancel_pressed = edge[SDL_GAMEPAD_BUTTON_EAST];
+    ps->start = ps->btn[PB_START];
+    ps->back  = ps->btn[PB_BACK];
+    ps->a_pressed      = ps->btn_pressed[PB_A];
+    ps->start_pressed  = ps->btn_pressed[PB_START];
+    ps->back_pressed   = ps->btn_pressed[PB_BACK];
+    ps->cancel_pressed = ps->btn_pressed[PB_B];
 }
 
 void pad_shutdown(void)
