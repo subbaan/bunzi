@@ -1,9 +1,5 @@
 # Bunzi
 
-
-https://github.com/user-attachments/assets/fd954965-02c6-44a9-941b-693f6f6c179e
-
-
 A colourful pixel-art bunny platformer played **inside your terminal**.
 Explore four levels, collect every coin and chase your best time. Stomping
 enemies takes time off the clock, so the fastest route means choosing your
@@ -12,6 +8,8 @@ battles.
 ![The title screen](docs/screenshots/title.png)
 
 Version: 0.12.1 · Linux x86_64 · needs the [kitty](https://sw.kovidgoyal.net/kitty/) terminal
+
+https://github.com/user-attachments/assets/fd954965-02c6-44a9-941b-693f6f6c179e
 
 ## Play it
 
