@@ -7,6 +7,8 @@ battles.
 
 ![The title screen](docs/screenshots/title.png)
 
+https://github.com/user-attachments/assets/1cb55597-6392-4397-a992-9265da2c5adc
+
 Version: 0.12.1 · Linux x86_64 · needs the [kitty](https://sw.kovidgoyal.net/kitty/) terminal
 
 ## Play it
